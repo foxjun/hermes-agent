@@ -71,6 +71,14 @@ def _require_tty(command_name: str) -> None:
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Startup profiler — activated by HERMES_PROFILE=1 env var
+# Must be imported before _apply_profile_override() calls checkpoint()
+try:
+    from hermes_cli.startup_profile import checkpoint, print_report
+except ImportError:
+    checkpoint = lambda *args, **kwargs: None
+    print_report = lambda: None
+
 # ---------------------------------------------------------------------------
 # Profile override — MUST happen before any hermes module import.
 #
@@ -136,19 +144,23 @@ def _apply_profile_override() -> None:
                     break
 
 _apply_profile_override()
+checkpoint("profile-override")
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
 from hermes_cli.config import get_hermes_home
 from hermes_cli.env_loader import load_hermes_dotenv
 load_hermes_dotenv(project_env=PROJECT_ROOT / '.env')
+checkpoint("dotenv-load")
 
 # Initialize centralized file logging early — all `hermes` subcommands
 # (chat, setup, gateway, config, etc.) write to agent.log + errors.log.
 try:
     from hermes_logging import setup_logging as _setup_logging
     _setup_logging(mode="cli")
+    checkpoint("logging-init")
 except Exception:
+    checkpoint("logging-init")
     pass  # best-effort — don't crash the CLI if logging setup fails
 
 # Apply IPv4 preference early, before any HTTP clients are created.
@@ -160,7 +172,9 @@ try:
     if isinstance(_net, dict) and _net.get("force_ipv4"):
         _apply_ipv4(force=True)
     del _early_cfg, _net
+    checkpoint("early-config")
 except Exception:
+    checkpoint("early-config")
     pass  # best-effort — don't crash if config isn't available yet
 
 import logging
@@ -171,6 +185,9 @@ from hermes_cli import __version__, __release_date__
 from hermes_constants import OPENROUTER_BASE_URL
 
 logger = logging.getLogger(__name__)
+
+# === Startup profiling checkpoints ===
+checkpoint("cli-init")
 
 
 def _relative_time(ts) -> str:
@@ -4835,6 +4852,7 @@ def cmd_logs(args):
 
 def main():
     """Main entry point for hermes CLI."""
+    checkpoint("argparse-init")
     parser = argparse.ArgumentParser(
         prog="hermes",
         description="Hermes Agent - AI assistant with tool-calling capabilities",
@@ -6543,10 +6561,17 @@ Examples:
     
     # Execute the command
     if hasattr(args, 'func'):
+        checkpoint(f"cmd-{args.command or 'chat'}")
         args.func(args)
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    main()
+    checkpoint("main-entry")
+    try:
+        main()
+    finally:
+        checkpoint("main-exit")
+        if __import__("os").getenv("HERMES_PROFILE") == "1":
+            print_report()
