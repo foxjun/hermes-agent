@@ -13,6 +13,10 @@ function getInitialLocale(): Locale {
   } catch {
     // SSR or privacy mode
   }
+  // Default to Chinese if browser language is Chinese
+  if (typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("zh")) {
+    return "zh";
+  }
   return "en";
 }
 
