@@ -6566,12 +6566,11 @@ Examples:
     else:
         parser.print_help()
 
+    # Always print profile report on exit (if profiling is active)
+    if os.getenv("HERMES_PROFILE") == "1":
+        checkpoint("main-exit")
+        print_report()
+
 
 if __name__ == "__main__":
-    checkpoint("main-entry")
-    try:
-        main()
-    finally:
-        checkpoint("main-exit")
-        if __import__("os").getenv("HERMES_PROFILE") == "1":
-            print_report()
+    main()

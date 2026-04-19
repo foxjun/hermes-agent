@@ -7,6 +7,65 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# ---------------------------------------------------------------------------
+# Caching: avoid re-parsing .env on every CLI invocation
+# ---------------------------------------------------------------------------
+
+_DOTENV_CACHE: set[str] = set()
+
+
+def _dotenv_cache_key(hermes_home: Path) -> str:
+    return str((hermes_home / ".env").resolve())
+
+
+def load_hermes_dotenv(
+    *,
+    hermes_home: str | os.PathLike | None = None,
+    project_env: str | os.PathLike | None = None,
+) -> list[Path]:
+    """
+    Load Hermes environment files with user config taking precedence.
+
+    Behavior:
+    - ``~/.hermes/.env`` overrides stale shell-exported values when present.
+    - project ``.env`` acts as a dev fallback and only fills missing values when
+      the user env exists.
+    - if no user env exists, the project ``.env`` also overrides stale shell vars.
+
+    Caching: once a .env has been loaded for a given hermes_home, subsequent
+    calls within the same process skip file I/O entirely (dotenv values are
+    already in os.environ from the first load).
+    """
+    loaded: list[Path] = []
+
+    home_path = Path(hermes_home or os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    user_env = home_path / ".env"
+    project_env_path = Path(project_env) if project_env else None
+
+    user_key = _dotenv_cache_key(home_path)
+
+    # ── Load user .env (with caching) ────────────────────────────────────
+    if user_env.exists():
+        if user_key in _DOTENV_CACHE:
+            # Already loaded in this process — skip file I/O
+            pass
+        else:
+            _sanitize_env_file_if_needed(user_env)
+            _load_dotenv_with_fallback(user_env, override=True)
+            _DOTENV_CACHE.add(user_key)
+        loaded.append(user_env)
+
+    # ── Load project .env (dev fallback, always re-load — it's tiny) ──────
+    if project_env_path and project_env_path.exists():
+        _load_dotenv_with_fallback(project_env_path, override=not loaded)
+        loaded.append(project_env_path)
+
+    return loaded
+
+
+# ---------------------------------------------------------------------------
+# Everything below is the original implementation (unchanged)
+# ---------------------------------------------------------------------------
 
 # Env var name suffixes that indicate credential values.  These are the
 # only env vars whose values we sanitize on load — we must not silently
@@ -87,37 +146,3 @@ def _sanitize_env_file_if_needed(path: Path) -> None:
                 raise
     except Exception:
         pass  # best-effort — don't block gateway startup
-
-
-def load_hermes_dotenv(
-    *,
-    hermes_home: str | os.PathLike | None = None,
-    project_env: str | os.PathLike | None = None,
-) -> list[Path]:
-    """Load Hermes environment files with user config taking precedence.
-
-    Behavior:
-    - `~/.hermes/.env` overrides stale shell-exported values when present.
-    - project `.env` acts as a dev fallback and only fills missing values when
-      the user env exists.
-    - if no user env exists, the project `.env` also overrides stale shell vars.
-    """
-    loaded: list[Path] = []
-
-    home_path = Path(hermes_home or os.getenv("HERMES_HOME", Path.home() / ".hermes"))
-    user_env = home_path / ".env"
-    project_env_path = Path(project_env) if project_env else None
-
-    # Fix corrupted .env files before python-dotenv parses them (#8908).
-    if user_env.exists():
-        _sanitize_env_file_if_needed(user_env)
-
-    if user_env.exists():
-        _load_dotenv_with_fallback(user_env, override=True)
-        loaded.append(user_env)
-
-    if project_env_path and project_env_path.exists():
-        _load_dotenv_with_fallback(project_env_path, override=not loaded)
-        loaded.append(project_env_path)
-
-    return loaded

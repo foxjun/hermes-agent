@@ -4,17 +4,15 @@ Hermes Startup Profiler — 轻量启动阶段计时器
 
 用法:
   HERMES_PROFILE=1 hermes version
-  HERMES_PROFILE=1 hermes status
 """
 
 import os
-import time
+import time as _time
 
-# 全局开关
 _ENABLED = os.getenv("HERMES_PROFILE") == "1"
 
-# checkpoints: {name: (start_time, end_time)}
-_checkpoints = {}
+# (name, start_time, end_time)
+_phases = []
 _current = None
 _start_time = None
 
@@ -22,62 +20,69 @@ _start_time = None
 def checkpoint(name: str) -> None:
     """
     记录一个阶段的结束和新阶段的开始。
-    第一次调用标记"阶段1开始"，之后每次调用结束上一个阶段。
+    第一次调用标记起点，后续每次调用结束上一个阶段并开始新阶段。
+    只报告有明确起止的阶段。
     """
     global _current, _start_time
 
-    now = time.perf_counter()
-    now_ms = now * 1000
+    now = _time.perf_counter()
 
     if _current is None:
-        # 第一次调用：这是起点
-        _start_time = now
+        # 第一次调用：仅记录起点，不计入任何阶段
         _current = name
-        _checkpoints[name] = {"start_ms": 0, "end_ms": None, "duration_ms": None}
+        _start_time = now
         return
 
     # 结束上一个阶段
-    if _current in _checkpoints:
-        _checkpoints[_current]["end_ms"] = now_ms
-        _checkpoints[_current]["duration_ms"] = now_ms - _checkpoints[_current]["start_ms"]
-
-    # 开始新阶段
+    _phases.append((_current, now))
     _current = name
-    _checkpoints[name] = {"start_ms": now_ms, "end_ms": None, "duration_ms": None}
 
 
 def get_report() -> dict:
     """获取格式化报告"""
-    if not _checkpoints:
+    if not _phases:
         return {}
 
-    # 计算总时长
-    all_ends = [v["end_ms"] for v in _checkpoints.values() if v["end_ms"] is not None]
-    total_ms = max(all_ends) - _checkpoints[list(_checkpoints.keys())[0]]["start_ms"]
+    # 计算总时长（从第一个阶段开始到最后一个阶段结束）
+    total_ms = (_phases[-1][1] - _phases[0][1]) * 1000
 
-    report = {
+    report_phases = []
+    for name, end_time in _phases:
+        # 找到这个阶段的开始时间（上一个阶段的结束，或第一个阶段对应的时间戳）
+        start_time = end_time
+        # 找到这个阶段的开始：previous end 或第一个阶段的开始
+        for i in range(len(_phases) - 1, -1, -1):
+            if _phases[i][1] == end_time and i > 0:
+                start_time = _phases[i - 1][1]
+                break
+
+        # 跳过第一个阶段（没有有效的开始-结束对）
+        if start_time == end_time:
+            continue
+
+        duration_ms = (end_time - start_time) * 1000
+        pct = (duration_ms / total_ms * 100) if total_ms > 0 else 0
+        report_phases.append({
+            "name": name,
+            "duration_ms": round(duration_ms, 1),
+            "pct": round(pct, 1),
+        })
+
+    return {
         "total_ms": round(total_ms, 1),
-        "phases": [],
+        "phases": report_phases,
     }
-
-    first_start = _checkpoints[list(_checkpoints.keys())[0]]["start_ms"]
-    for name, data in _checkpoints.items():
-        if data["duration_ms"] is not None:
-            pct = (data["duration_ms"] / total_ms * 100) if total_ms > 0 else 0
-            report["phases"].append({
-                "name": name,
-                "duration_ms": round(data["duration_ms"], 1),
-                "pct": round(pct, 1),
-                "start_ms": round(data["start_ms"] - first_start, 1),
-            })
-
-    return report
 
 
 def print_report() -> None:
     """打印报告到 stderr"""
+    import sys
+
+    if not _ENABLED:
+        return
+
     report = get_report()
-    if not report:
+    if not report or not report["phases"]:
         return
 
     total = report["total_ms"]
@@ -91,25 +96,10 @@ def print_report() -> None:
     for phase in report["phases"]:
         bar = "█" * int(phase["pct"] / 5)
         lines.append(
-            f"  {phase['name']:<30} {phase['duration_ms']:>8.1f}ms  {phase['pct']:>5.1f}%  {bar}"
+            f"  {phase['name']:<28} {phase['duration_ms']:>8.1f}ms  {phase['pct']:>5.1f}%  {bar}"
         )
 
     lines.append("=" * 50)
     lines.append("")
 
-    import sys
     sys.stderr.write("\n".join(lines))
-
-
-def profile(name: str):
-    """装饰器模式：@profile("阶段名")"""
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            checkpoint(name)
-            if _ENABLED:
-                import sys
-                sys.stderr.write(f"[PROFILE] > {name}\n")
-            result = func(*args, **kwargs)
-            return result
-        return wrapper
-    return decorator
