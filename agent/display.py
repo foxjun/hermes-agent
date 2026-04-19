@@ -914,11 +914,11 @@ def get_cute_tool_message(
                   "wait": f"wait {sid}", "kill": f"kill {sid}", "write": f"write {sid}", "submit": f"submit {sid}"}
         return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}  {dur}")
     if tool_name == "read_file":
-        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ 📖 read      {_path(args.get('path', ''), 50)}  {dur}")
     if tool_name == "write_file":
-        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ ✍️  write     {_path(args.get('path', ''), 50)}  {dur}")
     if tool_name == "patch":
-        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''))}  {dur}")
+        return _wrap(f"┊ 🔧 patch     {_path(args.get('path', ''), 50)}  {dur}")
     if tool_name == "search_files":
         pattern = _trunc(args.get("pattern", ""), 35)
         target = args.get("target", "content")
@@ -946,7 +946,9 @@ def get_cute_tool_message(
     if tool_name == "browser_get_images":
         return _wrap(f"┊ 🖼️  images    extracting  {dur}")
     if tool_name == "browser_vision":
-        return _wrap(f"┊ 👁️  vision    analyzing page  {dur}")
+        img = args.get('image_url', '')
+        domain = img.replace('https://', '').replace('http://', '').split('/')[0] if img else 'page'
+        return _wrap(f"┊ 👁️  vision    {_trunc(domain, 35)}  {dur}")
     if tool_name == "todo":
         todos_arg = args.get("todos")
         merge = args.get("merge", False)
@@ -979,7 +981,10 @@ def get_cute_tool_message(
     if tool_name == "vision_analyze":
         return _wrap(f"┊ 👁️  vision    {_trunc(args.get('question', ''), 30)}  {dur}")
     if tool_name == "mixture_of_agents":
-        return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}  {dur}")
+        # user_prompt is often long; show first meaningful line
+        prompt = args.get('user_prompt', '') or ''
+        first_line = prompt.strip().split('\n')[0] if prompt.strip() else ''
+        return _wrap(f"┊ 🧠 reason    {_trunc(first_line, 50)}  {dur}")
     if tool_name == "send_message":
         return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"  {dur}")
     if tool_name == "cronjob":
