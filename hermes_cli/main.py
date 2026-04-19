@@ -3151,6 +3151,88 @@ def cmd_cron(args):
     cron_command(args)
 
 
+def cmd_tasks(args):
+    """Show active and recent task sessions (subagents)."""
+    import sqlite3
+    import time
+    from datetime import datetime
+    from pathlib import Path
+    from hermes_constants import get_hermes_home
+
+    db_path = get_hermes_home() / "state.db"
+    if not db_path.exists():
+        print("No session database found.")
+        return
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Active parent sessions (no end_reason)
+    active = cur.execute("""
+        SELECT id, started_at, ended_at, end_reason, tool_call_count, model
+        FROM sessions
+        WHERE end_reason IS NULL AND parent_session_id IS NULL
+        ORDER BY started_at DESC LIMIT 10
+    """).fetchall()
+
+    # Sub-sessions of active parents
+    sub_map = {}
+    if active:
+        parent_ids = [r["id"] for r in active]
+        placeholders = ",".join("?" * len(parent_ids))
+        subs = cur.execute(f"""
+            SELECT id, parent_session_id, started_at, ended_at, end_reason, tool_call_count, model
+            FROM sessions
+            WHERE parent_session_id IN ({placeholders})
+            ORDER BY started_at DESC
+        """, parent_ids).fetchall()
+        for s in subs:
+            sub_map.setdefault(s["parent_session_id"], []).append(s)
+
+    print()
+    print(f"  {'ID':<30} {'DURATION':<12} {'TOOLS':<8} {'MODEL':<20}")
+    print(f"  {'-'*30} {'-'*12} {'-'*8} {'-'*20}")
+
+    def dur(s, e):
+        if e and s:
+            secs = e - s
+        elif s:
+            secs = time.time() - s
+        else:
+            return "—"
+        m = int(secs) // 60
+        s2 = int(secs) % 60
+        return f"{m}m{s2}s"
+
+    for r in active:
+        ended = r["ended_at"]
+        print(f"  {r['id']:<30} {dur(r['started_at'], ended):<12} {r['tool_call_count'] or 0:<8} {r['model'] or '—':<20}")
+        # Indent sub-sessions
+        for s in sub_map.get(r["id"], []):
+            print(f"    └─ {s['id']:<26} {dur(s['started_at'], s['ended_at']):<10} {s['tool_call_count'] or 0:<8} {s['model'] or '—':<20}")
+
+    if not active:
+        print("  No active sessions.")
+
+    # Recent finished sessions (last 5)
+    print()
+    print("  Recent finished sessions:")
+    print(f"  {'ID':<30} {'ENDED':<20} {'REASON':<18} {'TOOLS':<8}")
+    print(f"  {'-'*30} {'-'*20} {'-'*18} {'-'*8}")
+    recent = cur.execute("""
+        SELECT id, ended_at, end_reason, tool_call_count
+        FROM sessions
+        WHERE end_reason IS NOT NULL
+        ORDER BY ended_at DESC LIMIT 5
+    """).fetchall()
+    for r in recent:
+        ended_str = datetime.fromtimestamp(r["ended_at"]).strftime("%Y-%m-%d %H:%M") if r["ended_at"] else "—"
+        print(f"  {r['id']:<30} {ended_str:<20} {r['end_reason'] or '—':<18} {r['tool_call_count'] or 0:<8}")
+
+    conn.close()
+
+
 def cmd_webhook(args):
     """Webhook subscription management."""
     from hermes_cli.webhook import webhook_command
@@ -5354,6 +5436,16 @@ For more help on a command:
     cron_subparsers.add_parser("tick", help="Run due jobs once and exit")
 
     cron_parser.set_defaults(func=cmd_cron)
+
+    # =========================================================================
+    # tasks command
+    # =========================================================================
+    tasks_parser = subparsers.add_parser(
+        "tasks",
+        help="Show active and recent task sessions",
+        description="Display active sessions and their subagent tasks"
+    )
+    tasks_parser.set_defaults(func=cmd_tasks)
 
     # =========================================================================
     # webhook command
