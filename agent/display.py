@@ -8,6 +8,28 @@ import logging
 import os
 import sys
 import threading
+
+# Lazy toolset lookup cache: tool_name -> toolset name
+_TOOLSET_LOOKUP: dict[str, str] | None = None
+
+def _get_toolset(tool_name: str) -> str:
+    """Look up the toolset name for a tool (lazy-loaded from toolsets.py).
+
+    Uses the static TOOLSETS definition. Safe to call at any time —
+    does not require the tool registry to be populated.
+    """
+    global _TOOLSET_LOOKUP
+    if _TOOLSET_LOOKUP is None:
+        _TOOLSET_LOOKUP = {}
+        try:
+            from toolsets import TOOLSETS
+            for ts_name, ts_def in TOOLSETS.items():
+                for t in ts_def.get("tools", []):
+                    if t not in _TOOLSET_LOOKUP:
+                        _TOOLSET_LOOKUP[t] = ts_name
+        except Exception:
+            pass
+    return _TOOLSET_LOOKUP.get(tool_name, "")
 import time
 from dataclasses import dataclass, field
 from difflib import unified_diff
@@ -859,7 +881,10 @@ def get_cute_tool_message(
         return ("..." + p[-(n-3):]) if len(p) > n else p
 
     def _wrap(line: str) -> str:
-        """Apply skin tool prefix and failure suffix."""
+        """Apply toolset prefix, skin prefix, and failure suffix."""
+        ts = _get_toolset(tool_name)
+        if ts:
+            line = f"[{ts}] {line}"
         if skin_prefix != "┊":
             line = line.replace("┊", skin_prefix, 1)
         if not is_failure:
